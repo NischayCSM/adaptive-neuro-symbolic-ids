@@ -1,0 +1,12 @@
+# weights for RuleScore = w1*precision + w2*coverage + w3*stability - w4*conflict
+weights:
+  precision: 0.4
+  coverage: 0.3
+  stability: 0.2
+  conflict: 0.2
+
+# minimum support: reject rules matching fewer than N samples
+min_support: 50
+
+# rules must have a RuleScore >= acceptance_threshold to be accepted
+acceptance_threshold: 0.6

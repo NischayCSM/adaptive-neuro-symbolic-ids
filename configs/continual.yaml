@@ -1,0 +1,19 @@
+experiences:
+  - id: 1
+    classes:
+      - Normal
+      - Dos
+  - id: 2
+    classes:
+      - Generic
+      - Reconnaissance
+  - id: 3
+    classes:
+      - Exploits
+      - Analysis
+      - Backdoor
+  - id: 4
+    classes:
+      - Fuzzers
+      - Shellcode
+      - Worms

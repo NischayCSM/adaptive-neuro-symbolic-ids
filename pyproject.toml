@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nsids"
+version = "0.1.0"
+description = "Adaptive Neuro-Symbolic Intrusion Detection with Automatic Rule Induction and Continual Learning"
+readme = "README.md"
+requires-python = ">=3.9"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.setuptools.package-dir]
+nsids = "src"
