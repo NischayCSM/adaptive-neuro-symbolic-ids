@@ -114,6 +114,7 @@ def run_milestone3(project_root, dry_run=False):
         
     scripts = [
         "src/continual/continual_pipeline.py",
+        "src/continual/replay_finetune.py",
         "src/evaluation/run_milestone3_forgetting.py",
         "src/evaluation/run_final_comparison.py",
         "src/evaluation/run_ablation_study.py",
@@ -123,6 +124,8 @@ def run_milestone3(project_root, dry_run=False):
     for script in scripts:
         cmd = [sys.executable, str(project_root / script)]
         expected_file = None
+        if "replay_finetune.py" in script:
+            expected_file = str(project_root / "results" / "continual" / "replay_seed42.csv")
         if "run_external_validation.py" in script:
             expected_file = str(project_root / "results" / "external_validation.md")
         if not run_command(cmd, expected_output_file=expected_file, dry_run=dry_run):

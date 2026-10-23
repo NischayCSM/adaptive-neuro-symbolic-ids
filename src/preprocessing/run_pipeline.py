@@ -5,6 +5,7 @@ Usage
 -----
     python -m src.preprocessing.run_pipeline                 # default
     python -m src.preprocessing.run_pipeline --drop-leakage  # also drop ct_state_ttl
+    python -m src.preprocessing.run_pipeline --drop-features ct_state_ttl --output-dir data/processed_no_ttl
 """
 
 from __future__ import annotations
@@ -38,7 +39,23 @@ def main() -> None:
         action="store_true",
         help="Also drop leakage-flagged columns (ct_state_ttl).",
     )
+    parser.add_argument(
+        "--drop-features",
+        nargs="+",
+        default=[],
+        metavar="COLUMN",
+        help="Input columns to drop (default: none). Requires --output-dir other than data/processed.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=PROCESSED_DIR,
+        help="Where to write the processed arrays and pipeline (default: data/processed).",
+    )
     args = parser.parse_args()
+    out_dir = args.output_dir.resolve()
+    if args.drop_features and out_dir == PROCESSED_DIR.resolve():
+        parser.error("--drop-features must write to a new --output-dir, not data/processed")
 
     # ── Load raw CSVs ────────────────────────────────────────────────────
     train_path = RAW_DIR / "UNSW_NB15_training-set.csv"
@@ -57,7 +74,7 @@ def main() -> None:
     logger.info("Train: %s  |  Test: %s", train_df.shape, test_df.shape)
 
     # ── Fit on train, transform both ─────────────────────────────────────
-    pipe = UNSW_NB15_Pipeline(drop_leakage=args.drop_leakage)
+    pipe = UNSW_NB15_Pipeline(drop_leakage=args.drop_leakage, drop_features=tuple(args.drop_features))
 
     X_train, y_train, y_cat_train = pipe.fit_transform(train_df)
     X_test, y_test, y_cat_test = pipe.transform(test_df)
@@ -69,16 +86,16 @@ def main() -> None:
                 int(np.isinf(X_train).sum()), int(np.isinf(X_test).sum()))
 
     # ── Save artefacts ───────────────────────────────────────────────────
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    np.save(PROCESSED_DIR / "X_train.npy", X_train)
-    np.save(PROCESSED_DIR / "X_test.npy", X_test)
-    np.save(PROCESSED_DIR / "y_train.npy", y_train)
-    np.save(PROCESSED_DIR / "y_test.npy", y_test)
-    np.save(PROCESSED_DIR / "y_cat_train.npy", y_cat_train)
-    np.save(PROCESSED_DIR / "y_cat_test.npy", y_cat_test)
+    np.save(out_dir / "X_train.npy", X_train)
+    np.save(out_dir / "X_test.npy", X_test)
+    np.save(out_dir / "y_train.npy", y_train)
+    np.save(out_dir / "y_test.npy", y_test)
+    np.save(out_dir / "y_cat_train.npy", y_cat_train)
+    np.save(out_dir / "y_cat_test.npy", y_cat_test)
 
-    pipe_path = pipe.save(PROCESSED_DIR)
+    pipe_path = pipe.save(out_dir)
 
     # ── Save canonical class list (single source of truth) ───────────────
     le = pipe.label_encoder
@@ -91,11 +108,11 @@ def main() -> None:
             set(np.unique(y_cat_train).tolist())
             | set(np.unique(y_cat_test).tolist())
         )
-    classes_path = PROCESSED_DIR / "label_classes.json"
+    classes_path = out_dir / "label_classes.json"
     with open(classes_path, "w") as f:
         json.dump(real_classes, f, indent=2)
 
-    logger.info("Saved processed arrays + pipeline to %s", PROCESSED_DIR)
+    logger.info("Saved processed arrays + pipeline to %s", out_dir)
     logger.info("Pipeline artefact: %s", pipe_path)
     logger.info("Label classes (%d): %s", len(real_classes), real_classes)
 
@@ -106,7 +123,7 @@ def main() -> None:
     print(f"  Features:   {X_train.shape[1]}")
     print(f"  Train rows: {X_train.shape[0]:,}")
     print(f"  Test rows:  {X_test.shape[0]:,}")
-    print(f"  Output dir: {PROCESSED_DIR}")
+    print(f"  Output dir: {out_dir}")
     print("=" * 60 + "\n")
 
 

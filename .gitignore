@@ -18,6 +18,9 @@ build/
 # Data (large files — do not commit)
 data/raw/
 data/processed/
+data/processed_no_ttl/
+data/processed_no_ttl_group/
+data/processed_netflow/
 
 # Results (generated outputs)
 results/

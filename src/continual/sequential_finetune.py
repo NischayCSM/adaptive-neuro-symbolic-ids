@@ -1,4 +1,5 @@
 import os
+import sys
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -10,23 +11,6 @@ from sklearn.metrics import accuracy_score, f1_score
 
 from src.models.neural_ids import NeuralIDS
 from src.continual.experience_builder import ExperienceBuilder
-
-def _write_mock_results(csv_path):
-    # Generates a mock result matrix showing catastrophic forgetting
-    data = {
-        "Phase": ["After Exp1", "After Exp2", "After Exp3", "After Exp4"],
-        "Exp1_Acc": [0.98, 0.82, 0.65, 0.45],
-        "Exp1_F1":  [0.97, 0.79, 0.60, 0.40],
-        "Exp2_Acc": [0.00, 0.95, 0.70, 0.55],
-        "Exp2_F1":  [0.00, 0.94, 0.68, 0.50],
-        "Exp3_Acc": [0.00, 0.00, 0.92, 0.60],
-        "Exp3_F1":  [0.00, 0.00, 0.91, 0.58],
-        "Exp4_Acc": [0.00, 0.00, 0.00, 0.88],
-        "Exp4_F1":  [0.00, 0.00, 0.00, 0.85],
-    }
-    df = pd.DataFrame(data)
-    df.to_csv(csv_path, index=False)
-    print(f"Generated MOCK continual learning report to {csv_path} (simulated catastrophic forgetting).")
 
 def run_sequential_finetune():
     PROJECT_ROOT = Path(os.getcwd())
@@ -61,10 +45,9 @@ def run_sequential_finetune():
         except Exception as e:
             print(f"Warning: could not decode labels: {e}")
 
-    except FileNotFoundError:
-        print("Processed data not found. Generating mock continual learning results.")
-        _write_mock_results(csv_out)
-        return
+    except FileNotFoundError as e:
+        print(f"ERROR: processed data not found ({e}). Run 'python src/preprocessing/run_pipeline.py' first.", file=sys.stderr)
+        sys.exit(1)
         
     print("Loaded data successfully.")
     

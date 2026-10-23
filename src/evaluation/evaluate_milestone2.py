@@ -19,7 +19,7 @@ def calculate_fpr(y_true, y_pred, labels):
     for i, label in enumerate(labels):
         fp = cm[:, i].sum() - cm[i, i]
         tn = cm.sum() - cm[i, :].sum() - cm[:, i].sum() + cm[i, i]
-        fpr = fp / tn if tn > 0 else 0.0
+        fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
         fpr_dict[label] = fpr
     return fpr_dict
 

@@ -28,12 +28,13 @@ class NeuroSymbolicFuser:
                 - symbolic_score
                 - symbolic_explanation
         """
-        # Determine all possible classes
-        all_classes = set(neural_probs.keys())
-        
+        # Determine all possible classes, in a fixed order: neural_probs' key order (every caller
+        # builds it in class-index order), then classes named only by a fired rule.
+        all_classes = list(neural_probs.keys())
+
         # Calculate symbolic scores per class
         symbolic_scores = {cls: 0.0 for cls in all_classes}
-        
+
         # We can extract per-class symbolic scores from the all_matches if present
         if "all_matches" in symbolic_result and symbolic_result["all_matches"]:
             for rule in symbolic_result["all_matches"]:
@@ -41,16 +42,20 @@ class NeuroSymbolicFuser:
                 prec = rule.get("precision", 0.0)
                 if cls not in symbolic_scores:
                     symbolic_scores[cls] = 0.0
-                    all_classes.add(cls)
+                    all_classes.append(cls)
                 # Keep the max precision for that class
                 symbolic_scores[cls] = max(symbolic_scores[cls], prec)
-                
+
         final_scores = {}
         for cls in all_classes:
             n_score = neural_probs.get(cls, 0.0)
             s_score = symbolic_scores.get(cls, 0.0)
             final_scores[cls] = (self.alpha * n_score) + ((1 - self.alpha) * s_score)
-            
+
+        # Exact ties in the top score go to the first tied class in all_classes, i.e. the lowest
+        # class index, as np.argmax does in fusion_variants.v0_linear (max() keeps the first maximum).
+        # all_classes used to be a set, whose iteration order over class-name strings depends on
+        # PYTHONHASHSEED, so a tied row could get a different class from one run to the next.
         final_predicted_class = max(final_scores.items(), key=lambda x: x[1])[0]
         final_confidence = final_scores[final_predicted_class]
         

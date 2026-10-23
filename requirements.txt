@@ -12,3 +12,4 @@ networkx
 jupyter
 mlxtend
 pyyaml
+pytest

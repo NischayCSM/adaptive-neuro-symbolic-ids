@@ -69,107 +69,91 @@ def run_final_comparison():
     device = DEVICE
     print_device_info()
     
-    # Pre-load Static Neural Model
-    static_neural = NeuralIDS(input_dim=X_train.shape[1], output_dim=num_classes).to(device)
-    try:
-        static_neural.load_state_dict(torch.load(PROJECT_ROOT / "results" / "neural_model" / "neural_ids_weights.pth", map_location=device))
-    except:
-        print("Warning: Static neural weights not found. Using untrained static model.")
-    static_neural.eval()
-    
+    from src.continual.cl_eval import symbolic_results, fuse_predictions, predict_proba
+
+    def load_neural(path):
+        if not path.exists():
+            print(f"ERROR: checkpoint not found: {path}", file=sys.stderr)
+            sys.exit(1)
+        m = NeuralIDS(input_dim=X_train.shape[1], output_dim=num_classes).to(device)
+        m.load_state_dict(torch.load(path, map_location=device))
+        m.eval()
+        return m
+
+    CONT_DIR = PROJECT_ROOT / "results" / "continual"
+    REPLAY_SEED = 42
+    static_neural = load_neural(PROJECT_ROOT / "results" / "neural_model" / "neural_ids_weights.pth")
+    naive_ckpts = [CONT_DIR / "continual_checkpoints" / f"neural_ids_exp_{k}.pth" for k in range(1, num_exps + 1)]
+    replay_ckpts = [CONT_DIR / "replay_checkpoints" / f"neural_ids_exp_{k}_seed{REPLAY_SEED}.pth" for k in range(1, num_exps + 1)]
+    naive_models = [load_neural(p) for p in naive_ckpts]
+    replay_models = [load_neural(p) for p in replay_ckpts]
+
     xgb_wrapper = XGBoostBaseline.load(PROJECT_ROOT / "results" / "models" / "xgboost_multi.joblib")
     xgb_model = xgb_wrapper.model
     print("Loaded trained XGBoost (Multi-Class) model for fusion.")
-    
-    # Pre-load Static KB
-    static_kb = KnowledgeBase(db_path=PROCESSED_DIR / "knowledge_base.db")
-    static_reasoner = SymbolicReasoner(static_kb, feature_names)
-    fuser = NeuroSymbolicFuser(alpha=0.5)
 
-    # Note: To fulfill the requirement of using the continually updated models, 
-    # we load the checkpoints saved by run_milestone3_forgetting.py (sequential_finetune.py).
-    
-    continual_neural = NeuralIDS(input_dim=X_train.shape[1], output_dim=num_classes).to(device)
-    
-    continual_kb = KnowledgeBase(db_path=PROCESSED_DIR / "continual_kb.db")
-    continual_reasoner = SymbolicReasoner(continual_kb, feature_names)
-    
+    static_kb_path = PROCESSED_DIR / "knowledge_base.db"
+    continual_kb_path = PROCESSED_DIR / "continual_kb.db"
+    alpha = 0.5
+
     print("\nColumn Definitions (Which models feed which columns):")
-    print(" - Static_Neural: Frozen NeuralIDS MLP (results/neural_model/neural_ids_weights.pth)")
-    print(" - Static_NeuroSym: Frozen XGBoost Baseline (results/models/xgboost_multi.joblib) + Frozen KB (data/processed/knowledge_base.db)")
-    print(" - Continual_Neural: Iteratively trained NeuralIDS MLP (results/continual/continual_checkpoints/neural_ids_exp_{eid}.pth)")
-    print(" - Continual_NeuroSym: Iteratively trained NeuralIDS MLP + Continually updated KB (data/processed/continual_kb.db)\n")
-    
+    print(" - Static_Neural: Frozen NeuralIDS trained on all classes (results/neural_model/neural_ids_weights.pth)")
+    print(" - Static_NeuroSym: Frozen XGBoost (results/models/xgboost_multi.joblib) + static KB (data/processed/knowledge_base.db)")
+    print(" - Naive_*: NAIVE sequential fine-tuning, no replay (results/continual/continual_checkpoints/neural_ids_exp_{k}.pth)")
+    print(f" - Replay_*: replay fine-tuning, seed {REPLAY_SEED} (results/continual/replay_checkpoints/neural_ids_exp_{{k}}_seed{REPLAY_SEED}.pth)")
+    print(" - *_AfterExpK: checkpoint saved right after training on Exp K, evaluated on Exp K (plasticity, NOT retention)")
+    print(" - *_Final: checkpoint after the last experience, evaluated on Exp K (retention for K < last)")
+    print(" - *_NeuroSym (continual): that NeuralIDS + continually updated KB (data/processed/continual_kb.db)")
+    print(f" - All fusion uses NeuroSymbolicFuser(alpha={alpha})\n")
+
     results = []
-    
+
     for eid in range(1, num_exps + 1):
         print(f"Evaluating Experience {eid}...")
-        # Get data
         X_test_k, y_test_k_cat = builder.build_experience(X_test, y_cat_test, exp_id=eid, cumulative=False)
         y_test_k = np.array([class_to_idx[c] for c in y_test_k_cat])
-        
+
         if len(X_test_k) == 0:
-            continue
-            
-        # 1. Static Neural
-        with torch.no_grad():
-            static_logits = static_neural(torch.tensor(X_test_k, dtype=torch.float32).to(device))
-            static_probs = torch.softmax(static_logits, dim=-1).cpu().numpy()
-            static_preds = np.argmax(static_probs, axis=-1)
-        acc_sn = accuracy_score(y_test_k, static_preds)
-        
-        xgb_probs = xgb_model.predict_proba(X_test_k)
-        xgb_classes = xgb_model.classes_
-        
-        # 2. Static Neuro-Symbolic (Using XGBoost for fusion)
-        sns_preds = []
-        for i in range(len(X_test_k)):
-            n_probs = {all_classes[int(cls_idx)]: xgb_probs[i][j] for j, cls_idx in enumerate(xgb_classes)}
-            sym_res = static_reasoner.predict(X_test_k[i])
-            fuse_res = fuser.fuse(n_probs, sym_res)
-            sns_preds.append(class_to_idx.get(fuse_res["final_predicted_class"], static_preds[i]))
-        acc_sns = accuracy_score(y_test_k, sns_preds)
-        
-        # Load continual model checkpoint for this experience
-        checkpoint_path = PROJECT_ROOT / "results" / "continual" / "continual_checkpoints" / f"neural_ids_exp_{eid}.pth"
-        if checkpoint_path.exists():
-            continual_neural.load_state_dict(torch.load(checkpoint_path, map_location=device))
-        else:
-            print(f"Warning: Continual Neural checkpoint not found at {checkpoint_path}. Using initial weights.")
-                
-        # 3. Continual Neural
-        continual_neural.eval()
-        with torch.no_grad():
-            cont_logits = continual_neural(torch.tensor(X_test_k, dtype=torch.float32).to(device))
-            cont_probs = torch.softmax(cont_logits, dim=-1).cpu().numpy()
-            cont_preds = np.argmax(cont_probs, axis=-1)
-        acc_cn = accuracy_score(y_test_k, cont_preds)
-        
-        # 4. Continual Neuro-Symbolic (Using continually updated MLP for fusion)
-        cns_preds = []
-        for i in range(len(X_test_k)):
-            # BUGFIX: We must use cont_probs (from continual_neural) instead of xgb_probs
-            n_probs = {all_classes[j]: cont_probs[i][j] for j in range(num_classes)}
-            sym_res = continual_reasoner.predict(X_test_k[i])
-            fuse_res = fuser.fuse(n_probs, sym_res)
-            cns_preds.append(class_to_idx.get(fuse_res["final_predicted_class"], cont_preds[i]))
-        acc_cns = accuracy_score(y_test_k, cns_preds)
-        
-        results.append({
-            "Experience": eid,
-            "Static_Neural": acc_sn,
-            "Static_NeuroSym": acc_sns,
-            "Continual_Neural": acc_cn,
-            "Continual_NeuroSym": acc_cns
-        })
-        
+            print(f"ERROR: Experience {eid} test set is empty.", file=sys.stderr)
+            sys.exit(1)
+
+        static_sym = symbolic_results(static_kb_path, feature_names, X_test_k)
+        cont_sym = symbolic_results(continual_kb_path, feature_names, X_test_k)
+
+        def neural_acc(model):
+            return accuracy_score(y_test_k, np.argmax(predict_proba(model, X_test_k, device), axis=-1))
+
+        def fused_acc(probs, prob_classes, sym):
+            return accuracy_score(y_test_k, fuse_predictions(probs, prob_classes, sym, all_classes, class_to_idx, alpha))
+
+        def cont_fused_acc(model):
+            return fused_acc(predict_proba(model, X_test_k, device), range(num_classes), cont_sym)
+
+        row = {"Experience": eid}
+        row["Static_Neural"] = neural_acc(static_neural)
+        row["Static_NeuroSym"] = fused_acc(xgb_model.predict_proba(X_test_k), xgb_model.classes_, static_sym)
+        row["Naive_Neural_AfterExpK"] = neural_acc(naive_models[eid - 1])
+        row["Naive_NeuroSym_AfterExpK"] = cont_fused_acc(naive_models[eid - 1])
+        row["Naive_Neural_Final"] = neural_acc(naive_models[-1])
+        row["Naive_NeuroSym_Final"] = cont_fused_acc(naive_models[-1])
+        row["Replay_Neural_AfterExpK"] = neural_acc(replay_models[eid - 1])
+        row["Replay_NeuroSym_AfterExpK"] = cont_fused_acc(replay_models[eid - 1])
+        row["Replay_Neural_Final"] = neural_acc(replay_models[-1])
+        row["Replay_NeuroSym_Final"] = cont_fused_acc(replay_models[-1])
+        results.append({k: float(v) if k != "Experience" else v for k, v in row.items()})
+        print(row)
+
     df = pd.DataFrame(results)
     df.to_csv(csv_path, index=False)
     
     # Generate MD interpretation
     with open(md_path, "w") as f:
         f.write("# Milestone 3 Final Comparison\n\n")
-        f.write("Evaluation of the 4 system variants across continual experiences.\n\n")
+        f.write("Evaluation of system variants across continual experiences.\n\n")
+        f.write("- Static_*: frozen models (Static_NeuroSym = XGBoost + static KB)\n")
+        f.write("- Naive_*: naive sequential fine-tuning (no replay); Replay_*: replay fine-tuning, seed 42\n")
+        f.write("- *_AfterExpK: model right after Exp K, on Exp K (plasticity). *_Final: model after the last experience, on Exp K (retention)\n")
+        f.write("- *_NeuroSym for Naive/Replay: fused with the continual KB (data/processed/continual_kb.db), alpha=0.5\n\n")
         f.write(df.to_csv(index=False, sep="|"))
         
     print(f"Saved final comparison to {csv_path} and {md_path}")

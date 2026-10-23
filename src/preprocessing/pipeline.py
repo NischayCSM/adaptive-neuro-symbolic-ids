@@ -68,10 +68,13 @@ class UNSW_NB15_Pipeline:
         (columns are kept but callers are warned).
     encoding : str
         ``"ordinal"`` (default) or ``"onehot"`` for categorical features.
+    drop_features : tuple[str, ...]
+        Extra input columns to drop (default: none), e.g. ``("ct_state_ttl",)``.
     """
 
     drop_leakage: bool = False
     encoding: str = "ordinal"
+    drop_features: tuple = ()
 
     # ── Fitted state (populated by `fit`) ────────────────────────────────
     _is_fitted: bool = field(default=False, init=False, repr=False)
@@ -215,6 +218,8 @@ class UNSW_NB15_Pipeline:
             "cat_indices": self._cat_indices,
             "num_indices": self._num_indices,
         }
+        if self.drop_features:  # only stored when set, so the default artefact is unchanged
+            state["drop_features"] = list(self.drop_features)
         joblib.dump(state, out_path)
         logger.info("Pipeline saved to %s", out_path)
         return out_path
@@ -226,6 +231,7 @@ class UNSW_NB15_Pipeline:
         pipe = cls(
             drop_leakage=state["drop_leakage"],
             encoding=state["encoding"],
+            drop_features=tuple(state.get("drop_features", ())),
         )
         pipe._encoder = state["encoder"]
         pipe._imputer = state["imputer"]
@@ -251,6 +257,7 @@ class UNSW_NB15_Pipeline:
         cols = list(DROP_COLUMNS)
         if self.drop_leakage:
             cols.extend(LEAKAGE_FLAGGED)
+        cols.extend(c for c in self.drop_features if c not in cols)
         return cols
 
     def _separate(
